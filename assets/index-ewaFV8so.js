@@ -16,11 +16,12 @@ const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/event-CnyWr2tN.
                  data-message-index="${f}"
                  tabindex="${d?"0":"-1"}"
                  title="${t.fileName}">
-                <label class="message-select" data-action="select-message" title="Select message">
+                <label class="message-select" data-action="select-message" data-message-index="${f}" title="Select message">
                     <input
                         type="checkbox"
                         class="message-select-checkbox"
                         data-action="select-message"
+                        data-message-index="${f}"
                         ${h?"checked":""}
                         aria-label="Select message"
                     />
