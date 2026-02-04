@@ -1,0 +1,1 @@
+import{invoke as i}from"./core-DhEqZVGG.js";async function a(e,n){const t=typeof n=="string"?{title:n}:n;return await i("plugin:dialog|ask",{message:e.toString(),title:t?.title?.toString(),kind:t?.kind,yesButtonLabel:t?.okLabel?.toString(),noButtonLabel:t?.cancelLabel?.toString()})}export{a as ask};

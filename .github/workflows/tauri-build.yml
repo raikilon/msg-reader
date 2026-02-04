@@ -1,0 +1,554 @@
+name: Build Tauri Desktop Apps
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a draft release'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            target: aarch64-apple-darwin
+            rust_target: aarch64-apple-darwin
+            updater_target: darwin-aarch64
+            bundle_path: src-tauri/target/aarch64-apple-darwin/release/bundle
+            app_tar: macos/msgReader.app.tar.gz
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            target: x86_64-apple-darwin
+            rust_target: x86_64-apple-darwin
+            updater_target: darwin-x86_64
+            bundle_path: src-tauri/target/x86_64-apple-darwin/release/bundle
+            app_tar: macos/msgReader.app.tar.gz
+          - platform: ubuntu-22.04
+            args: ''
+            target: ''
+            rust_target: x86_64-unknown-linux-gnu
+            updater_target: linux-x86_64
+            bundle_path: src-tauri/target/release/bundle
+            app_tar: ''
+          - platform: windows-latest
+            args: ''
+            target: ''
+            rust_target: x86_64-pc-windows-msvc
+            updater_target: windows-x86_64
+            bundle_path: src-tauri/target/release/bundle
+            app_tar: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Get version from tag
+        id: get-version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dev"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Update version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          VERSION="${{ steps.get-version.outputs.version }}"
+          echo "Updating version to $VERSION"
+
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '$VERSION';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          node -e "
+            const fs = require('fs');
+            let content = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+            content = content.replace(/^(version = \")[^\"]*(\")$/m, '\$1$VERSION\$2');
+            fs.writeFileSync('src-tauri/Cargo.toml', content);
+          "
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Tauri App
+        shell: bash
+        run: |
+          npx tauri build ${{ matrix.args }}
+
+      - name: Create updater bundle and sign (macOS)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          BUNDLE="${{ matrix.bundle_path }}"
+          VERSION="${{ steps.get-version.outputs.version }}"
+
+          # Find the .app bundle
+          APP_PATH=$(find "$BUNDLE/macos" -name "*.app" -type d | head -1)
+          echo "Found app: $APP_PATH"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: No .app found!"
+            exit 1
+          fi
+
+          # Create tar.gz
+          APP_NAME=$(basename "$APP_PATH")
+          TAR_NAME="${APP_NAME}.tar.gz"
+          echo "Creating $TAR_NAME..."
+          tar -czf "$TAR_NAME" -C "$(dirname "$APP_PATH")" "$APP_NAME"
+
+          # Sign with minisign using Tauri's key format
+          echo "Signing $TAR_NAME..."
+
+          # Install minisign
+          brew install minisign
+
+          # Write private key to temp file (Tauri format is base64 encoded)
+          echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d > /tmp/private.key
+
+          # Sign the file
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            echo "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | minisign -S -s /tmp/private.key -m "$TAR_NAME" -t "msgReader v$VERSION"
+          else
+            minisign -S -s /tmp/private.key -m "$TAR_NAME" -t "msgReader v$VERSION"
+          fi
+
+          # Clean up
+          rm -f /tmp/private.key
+
+          # Move to updater-files
+          mkdir -p updater-files
+          mv "$TAR_NAME" updater-files/
+          mv "${TAR_NAME}.minisig" updater-files/"${TAR_NAME}.sig" 2>/dev/null || mv "${TAR_NAME}.sig" updater-files/ 2>/dev/null || true
+
+          echo "=== Created updater files: ==="
+          ls -la updater-files/
+
+      - name: Create updater bundle and sign (Linux)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          BUNDLE="${{ matrix.bundle_path }}"
+          VERSION="${{ steps.get-version.outputs.version }}"
+
+          # Find the AppImage
+          APPIMAGE=$(find "$BUNDLE" -name "*.AppImage" -type f | head -1)
+          echo "Found AppImage: $APPIMAGE"
+
+          if [ -z "$APPIMAGE" ]; then
+            echo "ERROR: No AppImage found!"
+            exit 1
+          fi
+
+          # Create tar.gz
+          APPIMAGE_NAME=$(basename "$APPIMAGE")
+          TAR_NAME="${APPIMAGE_NAME}.tar.gz"
+          echo "Creating $TAR_NAME..."
+          tar -czf "$TAR_NAME" -C "$(dirname "$APPIMAGE")" "$APPIMAGE_NAME"
+
+          # Download and install minisign
+          echo "Downloading minisign..."
+          curl -sL "https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz" -o minisign.tar.gz
+          tar -xzf minisign.tar.gz
+          chmod +x minisign-linux/x86_64/minisign
+          MINISIGN="./minisign-linux/x86_64/minisign"
+
+          # Write private key to temp file
+          echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d > /tmp/private.key
+
+          # Sign the file
+          echo "Signing $TAR_NAME..."
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            echo "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | $MINISIGN -S -s /tmp/private.key -m "$TAR_NAME" -t "msgReader v$VERSION"
+          else
+            $MINISIGN -S -s /tmp/private.key -m "$TAR_NAME" -t "msgReader v$VERSION"
+          fi
+
+          # Clean up
+          rm -f /tmp/private.key
+
+          # Move to updater-files
+          mkdir -p updater-files
+          mv "$TAR_NAME" updater-files/
+          mv "${TAR_NAME}.minisig" updater-files/"${TAR_NAME}.sig" 2>/dev/null || mv "${TAR_NAME}.sig" updater-files/ 2>/dev/null || true
+
+          echo "=== Created updater files: ==="
+          ls -la updater-files/
+
+      - name: Create updater bundle and sign (Windows)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $BUNDLE = "${{ matrix.bundle_path }}"
+          $VERSION = "${{ steps.get-version.outputs.version }}"
+
+          # Find the NSIS installer
+          $NSIS_EXE = Get-ChildItem -Path "$BUNDLE/nsis" -Filter "*-setup.exe" -File | Select-Object -First 1
+          Write-Host "Found NSIS installer: $($NSIS_EXE.FullName)"
+
+          if (-not $NSIS_EXE) {
+            Write-Host "ERROR: No NSIS installer found!"
+            exit 1
+          }
+
+          # Create zip (Windows uses .nsis.zip)
+          $EXE_NAME = $NSIS_EXE.Name
+          $ZIP_NAME = $EXE_NAME -replace '\.exe$', '.nsis.zip'
+          Write-Host "Creating $ZIP_NAME..."
+
+          Compress-Archive -Path $NSIS_EXE.FullName -DestinationPath $ZIP_NAME -Force
+
+          # Download minisign for Windows
+          Write-Host "Downloading minisign..."
+          $minisignUrl = "https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-win64.zip"
+          Invoke-WebRequest -Uri $minisignUrl -OutFile "minisign.zip"
+          Expand-Archive -Path "minisign.zip" -DestinationPath "minisign" -Force
+          # Use x86_64 version explicitly (zip contains both aarch64 and x86_64)
+          $minisignExe = Get-Item "minisign/minisign-win64/x86_64/minisign.exe"
+
+          # Write private key to temp file
+          $keyBytes = [System.Convert]::FromBase64String($env:TAURI_SIGNING_PRIVATE_KEY)
+          [System.IO.File]::WriteAllBytes("$env:TEMP\private.key", $keyBytes)
+
+          # Sign the file
+          Write-Host "Signing $ZIP_NAME..."
+          if ($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
+            # Pipe password via stdin
+            $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD | & $minisignExe.FullName -S -s "$env:TEMP\private.key" -m $ZIP_NAME -t "msgReader v$VERSION"
+          } else {
+            & $minisignExe.FullName -S -s "$env:TEMP\private.key" -m $ZIP_NAME -t "msgReader v$VERSION"
+          }
+
+          # Check if signature was created
+          if (-not (Test-Path "$ZIP_NAME.minisig")) {
+            Write-Host "ERROR: Signature file not created!"
+            exit 1
+          }
+
+          # Clean up
+          Remove-Item "$env:TEMP\private.key" -Force -ErrorAction SilentlyContinue
+
+          # Move to updater-files
+          New-Item -ItemType Directory -Path "updater-files" -Force | Out-Null
+          Move-Item $ZIP_NAME "updater-files/" -Force
+
+          # minisign creates .minisig file
+          $sigFile = "$ZIP_NAME.minisig"
+          if (Test-Path $sigFile) {
+            Move-Item $sigFile "updater-files/$ZIP_NAME.sig" -Force
+          }
+
+          Write-Host "=== Created updater files: ==="
+          Get-ChildItem "updater-files/"
+
+      - name: Collect installer artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          mkdir -p installer-files
+          BUNDLE="${{ matrix.bundle_path }}"
+
+          # macOS
+          find "$BUNDLE" -name "*.dmg" -type f -exec cp {} installer-files/ \; 2>/dev/null || true
+
+          # Linux
+          find "$BUNDLE" -name "*.deb" -type f -exec cp {} installer-files/ \; 2>/dev/null || true
+          find "$BUNDLE" -name "*.rpm" -type f -exec cp {} installer-files/ \; 2>/dev/null || true
+          find "$BUNDLE" -name "*.AppImage" -type f -exec cp {} installer-files/ \; 2>/dev/null || true
+
+          # Windows
+          find "$BUNDLE" -name "*.msi" -type f -exec cp {} installer-files/ \; 2>/dev/null || true
+          find "$BUNDLE" -name "*-setup.exe" -type f -exec cp {} installer-files/ \; 2>/dev/null || true
+
+          echo "=== Collected installer files: ==="
+          ls -la installer-files/ || echo "No files collected"
+
+      - name: Upload updater artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v6
+        with:
+          name: updater-${{ matrix.updater_target }}
+          path: updater-files/
+          if-no-files-found: warn
+
+      - name: Upload installer artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v6
+        with:
+          name: installer-${{ matrix.updater_target }}
+          path: installer-files/
+          if-no-files-found: warn
+
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: List downloaded artifacts
+        run: |
+          echo "=== Downloaded artifacts: ==="
+          find artifacts -type f
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TAG_NAME="${GITHUB_REF_NAME}"
+
+          # Create release (or update if exists)
+          gh release create "$TAG_NAME" \
+            --repo "${{ github.repository }}" \
+            --title "msgReader $TAG_NAME" \
+            --notes "Download the installer for your platform:
+          - **macOS (Apple Silicon)**: \`.dmg\` file ending with \`aarch64\`
+          - **macOS (Intel)**: \`.dmg\` file ending with \`x64\`
+          - **Windows**: \`.msi\` or \`.exe\` installer
+          - **Linux**: \`.AppImage\` or \`.deb\` package
+
+          The app will automatically check for updates." \
+            --draft \
+            2>/dev/null || echo "Release already exists, will upload assets"
+
+      - name: Upload installer files
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+
+          echo "=== Uploading installer files ==="
+
+          # Upload all installer files
+          for dir in artifacts/installer-*; do
+            if [ -d "$dir" ]; then
+              for file in "$dir"/*; do
+                if [ -f "$file" ]; then
+                  echo "Uploading: $(basename "$file")"
+                  gh release upload "$TAG_NAME" "$file" --repo "${{ github.repository }}" --clobber || true
+                fi
+              done
+            fi
+          done
+
+      - name: Upload updater bundles with correct names
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          echo "=== Uploading updater bundles ==="
+
+          # macOS aarch64 - rename to include architecture
+          MACOS_ARM=$(find artifacts/updater-darwin-aarch64 -name "*.app.tar.gz" -type f 2>/dev/null | head -1)
+          if [ -n "$MACOS_ARM" ] && [ -f "$MACOS_ARM" ]; then
+            cp "$MACOS_ARM" "msgReader_aarch64.app.tar.gz"
+            echo "Uploading: msgReader_aarch64.app.tar.gz"
+            gh release upload "$TAG_NAME" "msgReader_aarch64.app.tar.gz" --repo "${{ github.repository }}" --clobber
+          fi
+
+          # macOS x86_64 - rename to include architecture
+          MACOS_X64=$(find artifacts/updater-darwin-x86_64 -name "*.app.tar.gz" -type f 2>/dev/null | head -1)
+          if [ -n "$MACOS_X64" ] && [ -f "$MACOS_X64" ]; then
+            cp "$MACOS_X64" "msgReader_x64.app.tar.gz"
+            echo "Uploading: msgReader_x64.app.tar.gz"
+            gh release upload "$TAG_NAME" "msgReader_x64.app.tar.gz" --repo "${{ github.repository }}" --clobber
+          fi
+
+          # Linux - keep original name
+          LINUX_TAR=$(find artifacts/updater-linux-x86_64 -name "*.AppImage.tar.gz" -type f 2>/dev/null | head -1)
+          if [ -n "$LINUX_TAR" ] && [ -f "$LINUX_TAR" ]; then
+            echo "Uploading: $(basename "$LINUX_TAR")"
+            gh release upload "$TAG_NAME" "$LINUX_TAR" --repo "${{ github.repository }}" --clobber
+          fi
+
+          # Windows - keep original name
+          WINDOWS_ZIP=$(find artifacts/updater-windows-x86_64 -name "*.nsis.zip" -type f 2>/dev/null | head -1)
+          if [ -n "$WINDOWS_ZIP" ] && [ -f "$WINDOWS_ZIP" ]; then
+            echo "Uploading: $(basename "$WINDOWS_ZIP")"
+            gh release upload "$TAG_NAME" "$WINDOWS_ZIP" --repo "${{ github.repository }}" --clobber
+          fi
+
+      - name: Create and upload latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TAG_NAME="${GITHUB_REF_NAME}"
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}"
+
+          echo "=== Reading signatures ==="
+
+          # macOS aarch64
+          SIG_DARWIN_AARCH64=""
+          SIG_FILE=$(find artifacts/updater-darwin-aarch64 -name "*.app.tar.gz.sig" -type f 2>/dev/null | head -1)
+          if [ -n "$SIG_FILE" ] && [ -f "$SIG_FILE" ]; then
+            SIG_DARWIN_AARCH64=$(cat "$SIG_FILE" | tr -d '\r')
+            echo "Found darwin-aarch64 signature: ${SIG_DARWIN_AARCH64:0:50}..."
+          else
+            echo "WARNING: No darwin-aarch64 signature found!"
+          fi
+
+          # macOS x86_64
+          SIG_DARWIN_X86_64=""
+          SIG_FILE=$(find artifacts/updater-darwin-x86_64 -name "*.app.tar.gz.sig" -type f 2>/dev/null | head -1)
+          if [ -n "$SIG_FILE" ] && [ -f "$SIG_FILE" ]; then
+            SIG_DARWIN_X86_64=$(cat "$SIG_FILE" | tr -d '\r')
+            echo "Found darwin-x86_64 signature: ${SIG_DARWIN_X86_64:0:50}..."
+          else
+            echo "WARNING: No darwin-x86_64 signature found!"
+          fi
+
+          # Linux
+          SIG_LINUX=""
+          SIG_FILE=$(find artifacts/updater-linux-x86_64 -name "*.AppImage.tar.gz.sig" -type f 2>/dev/null | head -1)
+          if [ -n "$SIG_FILE" ] && [ -f "$SIG_FILE" ]; then
+            SIG_LINUX=$(cat "$SIG_FILE" | tr -d '\r')
+            echo "Found linux signature: ${SIG_LINUX:0:50}..."
+          else
+            echo "WARNING: No linux signature found!"
+          fi
+
+          # Windows
+          SIG_WINDOWS=""
+          SIG_FILE=$(find artifacts/updater-windows-x86_64 -name "*.nsis.zip.sig" -type f 2>/dev/null | head -1)
+          if [ -n "$SIG_FILE" ] && [ -f "$SIG_FILE" ]; then
+            SIG_WINDOWS=$(cat "$SIG_FILE" | tr -d '\r')
+            echo "Found windows signature: ${SIG_WINDOWS:0:50}..."
+          else
+            echo "WARNING: No windows signature found!"
+          fi
+
+          # Get actual filenames for Linux and Windows
+          LINUX_TAR=$(find artifacts/updater-linux-x86_64 -name "*.AppImage.tar.gz" -type f 2>/dev/null | head -1)
+          LINUX_TAR_NAME=$(basename "$LINUX_TAR" 2>/dev/null || echo "msgReader_${VERSION}_amd64.AppImage.tar.gz")
+
+          WINDOWS_ZIP=$(find artifacts/updater-windows-x86_64 -name "*.nsis.zip" -type f 2>/dev/null | head -1)
+          WINDOWS_ZIP_NAME=$(basename "$WINDOWS_ZIP" 2>/dev/null || echo "msgReader_${VERSION}_x64-setup.nsis.zip")
+
+          # Export for node
+          export SIG_DARWIN_AARCH64
+          export SIG_DARWIN_X86_64
+          export SIG_LINUX
+          export SIG_WINDOWS
+
+          # Create latest.json
+          # NOTE: Signatures must be BASE64 ENCODED (same format as pubkey in tauri.conf.json)
+          node -e "
+            const fs = require('fs');
+            const version = '${VERSION}';
+            const baseUrl = '${BASE_URL}';
+            const linuxTar = '${LINUX_TAR_NAME}';
+            const windowsZip = '${WINDOWS_ZIP_NAME}';
+
+            // Base64 encode signatures (Tauri updater expects base64-encoded minisign format)
+            const encodeSignature = (sig) => sig ? Buffer.from(sig).toString('base64') : '';
+
+            const json = {
+              version: version,
+              notes: 'See release notes at https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}',
+              pub_date: new Date().toISOString(),
+              platforms: {
+                'darwin-aarch64': {
+                  signature: encodeSignature(process.env.SIG_DARWIN_AARCH64),
+                  url: baseUrl + '/msgReader_aarch64.app.tar.gz'
+                },
+                'darwin-x86_64': {
+                  signature: encodeSignature(process.env.SIG_DARWIN_X86_64),
+                  url: baseUrl + '/msgReader_x64.app.tar.gz'
+                },
+                'linux-x86_64': {
+                  signature: encodeSignature(process.env.SIG_LINUX),
+                  url: baseUrl + '/' + linuxTar
+                },
+                'windows-x86_64': {
+                  signature: encodeSignature(process.env.SIG_WINDOWS),
+                  url: baseUrl + '/' + windowsZip
+                }
+              }
+            };
+            fs.writeFileSync('latest.json', JSON.stringify(json, null, 2));
+            console.log('Created latest.json:');
+            console.log(JSON.stringify(json, null, 2));
+          "
+
+          # Verify signatures are not empty
+          if [ -z "$SIG_DARWIN_AARCH64" ] || [ -z "$SIG_DARWIN_X86_64" ]; then
+            echo "ERROR: macOS signatures are missing!"
+            exit 1
+          fi
+
+          # Upload latest.json
+          echo "Uploading latest.json..."
+          gh release upload "$TAG_NAME" latest.json --repo "${{ github.repository }}" --clobber
+
+          echo "=== Release complete ==="

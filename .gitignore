@@ -1,0 +1,16 @@
+node_modules/
+.gh-pages/*
+dist/*
+.DS_Store
+doc/eml/multipart_nested.eml
+doc/msg/*.msg
+NOTES.md
+coverage/*
+
+# Tauri build artifacts
+src-tauri/target/
+doc/todo/*
+doc/release-notes/*
+
+doc/res/email/confidential/*
+doc/res/email/bulk/*
