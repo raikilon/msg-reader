@@ -135,7 +135,7 @@
     }
 
     .message-list {
-        width: 400px;
+        width: 415px;
         display: flex;
         flex-direction: column;
         padding-top: 1rem;
@@ -176,6 +176,121 @@
         padding: 0 1rem 0 2rem;
     }
 
+    .bulk-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem 0.5rem 2rem;
+        margin-bottom: 1rem;
+        border-top: 1px solid var(--border-color);
+        border-bottom: 1px solid var(--border-color);
+        background-color: var(--surface-color);
+        flex-wrap: wrap;
+    }
+
+    .message-select-checkbox {
+        appearance: none;
+        -webkit-appearance: none;
+        width: 1.05rem;
+        height: 1.05rem;
+        border: 1.5px solid var(--border-color);
+        border-radius: 0.35rem;
+        background-color: var(--surface-secondary);
+        display: inline-grid;
+        place-content: center;
+        transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
+        cursor: pointer;
+    }
+
+    .message-select-checkbox::after {
+        content: '';
+        width: 0.35rem;
+        height: 0.6rem;
+        border: solid #fff;
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg) scale(0);
+        transform-origin: center;
+        transition: transform 0.15s ease;
+    }
+
+    .message-select-checkbox:checked {
+        background-color: var(--primary-color);
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    }
+
+    .message-select-checkbox:checked::after {
+        transform: rotate(45deg) scale(1);
+    }
+
+    .message-select-checkbox:focus-visible {
+        outline: 2px solid var(--primary-color);
+        outline-offset: 2px;
+    }
+
+    .message-select:hover .message-select-checkbox {
+        border-color: var(--primary-color);
+    }
+
+    .bulk-actions-buttons {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        flex-wrap: wrap;
+    }
+
+    .bulk-action-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.6rem;
+        border: 1px solid var(--border-color);
+        border-radius: 0.6rem;
+        background-color: var(--surface-secondary);
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: color 0.2s, background-color 0.2s, border-color 0.2s;
+    }
+
+    .bulk-action-btn svg {
+        width: 1rem;
+        height: 1rem;
+    }
+
+    .bulk-action-btn:hover {
+        background-color: var(--hover-bg);
+        color: var(--text-primary);
+    }
+
+    .bulk-action-btn.active {
+        border-color: var(--primary-color);
+        background-color: var(--active-bg);
+        color: var(--text-primary);
+    }
+
+    .bulk-action-btn.partial {
+        border-color: var(--primary-color);
+        color: var(--text-primary);
+    }
+
+    .bulk-action-btn.danger:hover {
+        color: #ef4444;
+        border-color: #ef4444;
+    }
+
+    .bulk-action-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .bulk-actions-meta {
+        margin-left: auto;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        white-space: nowrap;
+    }
+
     .shortcut-hint {
         display: flex;
         align-items: center;
@@ -211,6 +326,10 @@
     }
 
     .message-item {
+        display: grid;
+        grid-template-columns: 1.5rem 1fr;
+        column-gap: 0.6rem;
+        align-items: start;
         padding: 0.6em 0.9em;
         cursor: pointer;
         position: relative;
@@ -226,9 +345,28 @@
         box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
     }
 
+    .message-item.selected {
+        border-color: var(--primary-color);
+        background-color: var(--hover-bg);
+    }
+
     .message-item.active {
         background-color: var(--active-bg);
         border-color: var(--active-border);
+    }
+
+    .message-select {
+        display: flex;
+        align-items: flex-start;
+        padding-top: 0.2rem;
+    }
+
+    .message-select-checkbox {
+        cursor: pointer;
+    }
+
+    .message-item-content {
+        min-width: 0;
     }
 
     .message-sender {

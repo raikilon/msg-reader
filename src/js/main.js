@@ -171,6 +171,51 @@ class App {
             this.uiManager.showWelcomeScreen();
         }
     }
+
+    /**
+     * Deletes multiple messages at once
+     * @param {Array} messagesToDelete - Array of message objects
+     */
+    bulkDeleteMessages(messagesToDelete) {
+        if (!Array.isArray(messagesToDelete) || messagesToDelete.length === 0) return;
+
+        const hashes = new Set(messagesToDelete.map(msg => msg.messageHash));
+        const currentMessage = this.messageHandler.getCurrentMessage();
+        const currentDeleted = currentMessage && hashes.has(currentMessage.messageHash);
+
+        this.messageHandler.deleteMessagesByHash(hashes);
+        this.uiManager.updateMessageList();
+
+        const remainingMessages = this.messageHandler.getMessages();
+        if (remainingMessages.length === 0) {
+            this.uiManager.showWelcomeScreen();
+            return;
+        }
+
+        if (currentDeleted || !currentMessage) {
+            this.uiManager.showMessage(remainingMessages[0]);
+        } else {
+            this.uiManager.showMessage(currentMessage);
+        }
+    }
+
+    /**
+     * Sets pinned state for multiple messages
+     * @param {Array} messagesToUpdate - Array of message objects
+     * @param {boolean} pinned - Whether messages should be pinned
+     */
+    bulkSetPinned(messagesToUpdate, pinned) {
+        if (!Array.isArray(messagesToUpdate) || messagesToUpdate.length === 0) return;
+
+        const hashes = new Set(messagesToUpdate.map(msg => msg.messageHash));
+        this.messageHandler.setPinnedByHash(hashes, pinned);
+        this.uiManager.updateMessageList();
+
+        const currentMessage = this.messageHandler.getCurrentMessage();
+        if (currentMessage) {
+            this.uiManager.showMessage(currentMessage);
+        }
+    }
 }
 
 /**

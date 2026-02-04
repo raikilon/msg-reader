@@ -15,6 +15,7 @@ class MessageHandler {
         this.messages = [];
         this.currentMessage = null;
         this.pinnedMessages = new Set(this.storage.get('pinnedMessages', []));
+        this.selectedMessages = new Set();
     }
 
     /**
@@ -75,6 +76,7 @@ class MessageHandler {
         const msgInfo = this.messages[index];
         this.messages.splice(index, 1);
         this.pinnedMessages.delete(msgInfo.messageHash);
+        this.selectedMessages.delete(msgInfo.messageHash);
         this.savePinnedMessages();
 
         if (this.messages.length === 0) {
@@ -85,6 +87,27 @@ class MessageHandler {
         // or the last message if we deleted the last one
         const nextIndex = Math.min(index, this.messages.length - 1);
         return this.messages[nextIndex];
+    }
+
+    /**
+     * Deletes multiple messages by hash
+     * @param {Iterable<string>} hashes - Message hashes to delete
+     * @returns {number} Number of deleted messages
+     */
+    deleteMessagesByHash(hashes) {
+        const hashSet = new Set(hashes);
+        if (hashSet.size === 0) return 0;
+
+        const beforeCount = this.messages.length;
+        this.messages = this.messages.filter(msg => !hashSet.has(msg.messageHash));
+
+        hashSet.forEach(hash => {
+            this.pinnedMessages.delete(hash);
+            this.selectedMessages.delete(hash);
+        });
+
+        this.savePinnedMessages();
+        return beforeCount - this.messages.length;
     }
 
     /**
@@ -104,12 +127,77 @@ class MessageHandler {
     }
 
     /**
+     * Sets pinned state for a set of messages by hash
+     * @param {Iterable<string>} hashes - Message hashes to update
+     * @param {boolean} pinned - Whether messages should be pinned
+     */
+    setPinnedByHash(hashes, pinned) {
+        const hashSet = new Set(hashes);
+        hashSet.forEach(hash => {
+            if (pinned) {
+                this.pinnedMessages.add(hash);
+            } else {
+                this.pinnedMessages.delete(hash);
+            }
+        });
+        this.savePinnedMessages();
+    }
+
+    /**
      * Checks if a message is pinned
      * @param {Object} msgInfo - Message object to check
      * @returns {boolean} True if the message is pinned
      */
     isPinned(msgInfo) {
         return this.pinnedMessages.has(msgInfo.messageHash);
+    }
+
+    /**
+     * Checks if a message is selected
+     * @param {Object} msgInfo - Message object to check
+     * @returns {boolean} True if the message is selected
+     */
+    isSelected(msgInfo) {
+        return this.selectedMessages.has(msgInfo.messageHash);
+    }
+
+    /**
+     * Sets selection state for a message
+     * @param {Object} msgInfo - Message object to update
+     * @param {boolean} selected - Whether the message should be selected
+     */
+    setSelected(msgInfo, selected) {
+        if (!msgInfo?.messageHash) return;
+        if (selected) {
+            this.selectedMessages.add(msgInfo.messageHash);
+        } else {
+            this.selectedMessages.delete(msgInfo.messageHash);
+        }
+    }
+
+    /**
+     * Clears all selected messages
+     */
+    clearSelection() {
+        this.selectedMessages.clear();
+    }
+
+    /**
+     * Selects or deselects a list of messages
+     * @param {Array} messages - Messages to update
+     * @param {boolean} selected - Whether to select or deselect
+     */
+    setSelectionForMessages(messages, selected) {
+        if (!Array.isArray(messages)) return;
+        messages.forEach(msg => this.setSelected(msg, selected));
+    }
+
+    /**
+     * Gets all selected messages
+     * @returns {Array} Selected messages array
+     */
+    getSelectedMessages() {
+        return this.messages.filter(msg => this.selectedMessages.has(msg.messageHash));
     }
 
     /**
