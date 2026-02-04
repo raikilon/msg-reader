@@ -4,6 +4,7 @@ import { AttachmentModalManager } from './AttachmentModalManager.js';
 import { ToastManager } from './ToastManager.js';
 import { SearchManager } from '../SearchManager.js';
 import { isTauri, saveFileWithDialog } from '../tauri-bridge.js';
+import { buildEmlDownload } from '../emlExport.js';
 
 // Debounce time for attachment clicks (Windows double-click interval)
 const ATTACHMENT_CLICK_DEBOUNCE_MS = 500;
@@ -80,6 +81,13 @@ class UIManager {
 
             if (action === 'pin') window.app.togglePin(index);
             else if (action === 'delete') window.app.deleteMessage(index);
+            else if (action === 'download-eml') {
+                if (Number.isNaN(index)) return;
+                const message = this.messageHandler.getMessages()[index];
+                if (message) {
+                    this.downloadMessageAsEml(message);
+                }
+            }
             else if (action === 'preview' || action === 'download') {
                 // Debounce attachment clicks to prevent double-open from Outlook habits
                 const now = Date.now();
@@ -315,6 +323,34 @@ class UIManager {
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+        }
+    }
+
+    /**
+     * Download the current message as an EML file
+     * @param {Object} message - Message object to export
+     */
+    async downloadMessageAsEml(message) {
+        try {
+            const download = buildEmlDownload(message);
+            if (!download) return;
+
+            if (isTauri()) {
+                const saved = await saveFileWithDialog(download.dataUrl, download.fileName);
+                if (saved) {
+                    this.showInfo('Email saved successfully');
+                }
+            } else {
+                const link = document.createElement('a');
+                link.href = download.dataUrl;
+                link.download = download.fileName;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        } catch (error) {
+            console.error('Failed to export email:', error);
+            this.showError('Failed to export email');
         }
     }
 
