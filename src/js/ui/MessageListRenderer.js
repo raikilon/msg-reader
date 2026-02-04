@@ -137,7 +137,7 @@ export class MessageListRenderer {
             <div class="message-item ${isActive ? 'active' : ''} ${isPinned ? 'pinned' : ''} ${isSelected ? 'selected' : ''}"
                  id="message-${index}"
                  role="option"
-                 aria-selected="${isSelected}"
+                 aria-selected="${isActive}"
                  aria-current="${isActive ? 'true' : 'false'}"
                  aria-setsize="${filteredMessages.length}"
                  aria-posinset="${index + 1}"
@@ -149,7 +149,6 @@ export class MessageListRenderer {
                         type="checkbox"
                         class="message-select-checkbox"
                         data-action="select-message"
-                        data-message-index="${originalIndex}"
                         ${isSelected ? 'checked' : ''}
                         aria-label="Select message"
                     />
