@@ -144,11 +144,12 @@ export class MessageListRenderer {
                  data-message-index="${originalIndex}"
                  tabindex="${isActive ? '0' : '-1'}"
                  title="${msg.fileName}">
-                <label class="message-select" data-action="select-message" title="Select message">
+                <label class="message-select" data-action="select-message" data-message-index="${originalIndex}" title="Select message">
                     <input
                         type="checkbox"
                         class="message-select-checkbox"
                         data-action="select-message"
+                        data-message-index="${originalIndex}"
                         ${isSelected ? 'checked' : ''}
                         aria-label="Select message"
                     />

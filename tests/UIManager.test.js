@@ -233,7 +233,7 @@ describe('UIManager (Facade)', () => {
             mockMessageHandler.getMessages.mockReturnValue([createMockMessage()]);
             uiManager.updateMessageList();
 
-            document.querySelector('[data-message-index]').click();
+            document.querySelector('.message-item[data-message-index="0"]').click();
 
             expect(window.app.showMessage).toHaveBeenCalledWith(0);
         });
@@ -650,7 +650,7 @@ describe('MessageListRenderer', () => {
     test('sets data-message-index attribute', () => {
         mockHandler.getMessages.mockReturnValue([createMockMessage(), createMockMessage({ subject: 'Second' })]);
         renderer.render();
-        const items = container.querySelectorAll('[data-message-index]');
+        const items = container.querySelectorAll('.message-item[data-message-index]');
         expect(items[0].dataset.messageIndex).toBe('0');
         expect(items[1].dataset.messageIndex).toBe('1');
     });
